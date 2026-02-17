@@ -1,0 +1,29 @@
+[package]
+name = "srx"
+version = "0.1.0"
+edition = "2021"
+description = "Modern compressed + encrypted archive format"
+license = "MIT"
+
+[dependencies]
+zstd = "0.13"
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+argon2 = "0.5"
+blake3 = "1.5"
+clap = { version = "4.5", features = ["derive"] }
+thiserror = "1.0"
+bitflags = "2.5"
+rand = "0.8"
+lz4_flex = "0.11"
+
+[dev-dependencies]
+tempfile = "3.10"
+criterion = "0.5"
+
+[[bench]]
+name = "bench"
+harness = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
