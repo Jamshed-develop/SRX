@@ -1,15 +1,15 @@
 [package]
 name = "srx-rs"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 description = "Modern compressed + encrypted archive format"
-license = "GPL-3.0-only"
+license = "GPL-3.0"
 repository = "https://github.com/Jamshed-develop/srx"
-readme = "README.md"
-keywords = ["compression", "encryption", "archive", "cli"]
-categories = ["compression", "cryptography", "command-line-utilities"]
-documentation = "https://github.com/Jamshed-develop/SRX/wiki"
 homepage = "https://github.com/Jamshed-develop/srx"
+documentation = "https://github.com/Jamshed-develop/srx/wiki"
+readme = "README.md"
+keywords = ["archive", "encryption", "compression", "security", "backup"]
+categories = ["cryptography", "compression", "filesystem"]
 
 [dependencies]
 zstd = "0.13"
@@ -33,3 +33,7 @@ harness = false
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[[bin]]
+name = "srx"
+path = "src/main.rs"
