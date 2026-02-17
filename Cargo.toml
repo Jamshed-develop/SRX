@@ -3,7 +3,7 @@ name = "srx"
 version = "1.0.0"
 edition = "2021"
 description = "Modern compressed + encrypted archive format"
-license = "GPL3"
+license = "GPL-3.0-only"
 
 [dependencies]
 zstd = "0.13"
