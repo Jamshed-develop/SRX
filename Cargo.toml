@@ -4,6 +4,12 @@ version = "1.0.0"
 edition = "2021"
 description = "Modern compressed + encrypted archive format"
 license = "GPL-3.0-only"
+repository = "https://github.com/Jamshed-develop/srx"
+readme = "README.md"
+keywords = ["compression", "encryption", "archive", "cli"]
+categories = ["compression", "cryptography", "command-line-utilities"]
+documentation = "https://github.com/Jamshed-develop/SRX/wiki"
+homepage = "https://github.com/Jamshed-develop/srx"
 
 [dependencies]
 zstd = "0.13"
