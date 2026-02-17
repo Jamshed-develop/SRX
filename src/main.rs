@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use srx::{compression::CompressionAlgo, Packer, Unpacker};
+use srx_rs::{compression::CompressionAlgo, Packer, Unpacker};
 
 #[derive(Parser)]
 #[command(name = "srx")]
