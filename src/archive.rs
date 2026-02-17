@@ -167,7 +167,7 @@ impl Unpacker {
             return Err(ArchiveError::InvalidArchive("Unsupported version".into()));
         }
 
-        let flags = header.flags();
+        let _flags = header.flags();
 
         let mut metadata_bytes = vec![0u8; header.metadata_len as usize];
         file.read_exact(&mut metadata_bytes)?;
