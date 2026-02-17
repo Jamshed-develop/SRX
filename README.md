@@ -36,7 +36,7 @@ A modern compressed + encrypted archive format designed for performance, securit
 ### Installation
 
 ```bash
-git clone https://github.com/yourusername/srx.git
+git clone https://github.com/Jamshed-develop/srx.git
 cd srx
 cargo build --release
 ```
@@ -234,7 +234,7 @@ Add SRX to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-srx = { git = "https://github.com/yourusername/srx.git" }
+srx = { git = "https://github.com/Jamshed-develop/srx.git" }
 ```
 
 ### Pack a File
@@ -580,7 +580,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**[Report Bug](https://github.com/Jamshed-develop/SRX/issues) · [Request Feature](https://github.com/Jamshed-develop/SRX/issues) · [Read Spec](SPEC.md)**
+**[Report Bug](https://github.com/Jamshed-develop/srx/issues) · [Request Feature](https://github.com/Jamshed-develop/srx/issues) · [Read Spec](SPEC.md)**
 
 Made with ❤️ in Rust
 
