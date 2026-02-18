@@ -89,6 +89,54 @@ SRX prioritizes in order:
 
 ---
 
+## Why SRX for DevOps and CI?
+
+SRX is designed for modern infrastructure where security is non-negotiable and automation is essential.
+
+### CI Pipelines
+
+- **Deterministic output** - Same input + password = same archive (reproducible builds)
+- **Non-interactive** - All operations via CLI flags, no prompts
+- **Fast failure** - Per-chunk authentication detects corruption early, not at the end
+- **Exit codes** - Proper exit status for scripting (`$?` in bash, `$LASTEXITCODE` in PowerShell)
+
+```bash
+# CI example: encrypt build artifact
+srx pack ./dist/app.tar.gz artifact.srx -p "${SRX_PASSWORD}" -a zstd -l 9
+
+# Verify integrity before upload
+srx info artifact.srx -p "${SRX_PASSWORD}" && aws s3 cp artifact.srx s3://bucket/
+```
+
+### Cloud Backups
+
+- **Chunk-based random access** - Restore single file from large archive without full extraction
+- **Integrity verification** - BLAKE3 hash detects bit rot and silent corruption
+- **Compression built-in** - No separate gzip step needed
+- **Streaming** - Process files larger than available RAM
+
+```bash
+# Backup with integrity check
+srx pack /var/lib/postgresql backup.srx -p "${BACKUP_KEY}"
+srx info backup.srx -p "${BACKUP_KEY}"  # Verify before upload
+```
+
+### Zero-Trust Environments
+
+- **Authenticated encryption always on** - No "forgot to encrypt" mistakes
+- **No external keys to manage** - Password-derived keys, no key files to leak
+- **Per-chunk authentication** - Tampering detected immediately, not after full extraction
+- **Timing-attack resistant** - XChaCha20 is constant-time, no data-dependent branches
+
+| Threat Scenario | ZIP/7Z | SRX |
+|-----------------|--------|-----|
+| Attacker modifies archive | May not detect | **Detected on first affected chunk** |
+| GPU-based password cracking | Weak protection | **Argon2id with 64 MiB memory cost** |
+| Extract in untrusted environment | Metadata leaked | **Authenticated before any output** |
+| CI log leaks archive info | Filenames visible | **Filename stored encrypted** |
+
+---
+
 ## Architecture
 
 ```mermaid
