@@ -43,6 +43,11 @@ cargo build --release
 
 The binary will be at `./target/release/srx`.
 
+Install srx using Cargo:
+```bash
+cargo install srx-rs
+```
+
 ### 30-Second Example
 
 ```bash
