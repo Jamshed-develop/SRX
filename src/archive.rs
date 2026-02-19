@@ -1,11 +1,14 @@
 use crate::compression::{CompressionAlgo, Compressor};
 use crate::crypto::{Encryptor, derive_key, generate_nonce, generate_salt};
-use crate::format::{Tag, ChunkIndexEntry, ChunkIndex, Flags, Header, Metadata, TlvEntry, DEFAULT_CHUNK_SIZE, FOOTER_SIZE, HEADER_SIZE, SALT_SIZE};
+use crate::format::{Tag, ChunkIndexEntry, ChunkIndex, Flags, Header, Metadata, TlvEntry, DEFAULT_CHUNK_SIZE, FOOTER_SIZE, HEADER_SIZE, SALT_SIZE, NONCE_SIZE, TAG_SIZE};
 
 use blake3::Hasher;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write, Seek};
 use std::path::Path;
+
+/// Minimum password length requirement
+const MIN_PASSWORD_LENGTH: usize = 8;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArchiveError {
@@ -19,6 +22,32 @@ pub enum ArchiveError {
     InvalidArchive(String),
     #[error("Integrity check failed")]
     IntegrityFailed,
+    #[error("Password too short: minimum {0} characters required")]
+    PasswordTooShort(usize),
+    #[error("Metadata integrity check failed")]
+    MetadataIntegrityFailed,
+}
+
+/// Sanitize filename to prevent path traversal attacks
+/// Returns only the file name component, stripping any directory paths
+fn sanitize_filename(filename: &str) -> String {
+    // Remove any path separators and take only the file name
+    let sanitized: String = filename
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | '\0'))
+        .collect();
+    
+    // If the result is empty, use a default
+    if sanitized.is_empty() {
+        return "file".to_string();
+    }
+    
+    // Limit filename length to prevent issues
+    if sanitized.len() > 255 {
+        sanitized[..255].to_string()
+    } else {
+        sanitized
+    }
 }
 
 pub struct Packer {
@@ -54,6 +83,11 @@ impl Packer {
     }
 
     pub fn pack<P: AsRef<Path>, Q: AsRef<Path>>(&self, input: P, output: Q) -> Result<(), ArchiveError> {
+        // Security: Validate password length
+        if self.password.len() < MIN_PASSWORD_LENGTH {
+            return Err(ArchiveError::PasswordTooShort(MIN_PASSWORD_LENGTH));
+        }
+
         let input_path = input.as_ref();
         let output_path = output.as_ref();
 
@@ -71,20 +105,38 @@ impl Packer {
 
         let flags = Flags::ENCRYPTED | Flags::COMPRESSED;
 
-        let filename = input_path
+        // Security: Sanitize filename to prevent path traversal
+        let raw_filename = input_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("file");
+        let filename = sanitize_filename(raw_filename);
 
+        // Security: Encrypt the filename for metadata protection
+        let filename_nonce = generate_nonce();
+        let (encrypted_filename, filename_tag) = encryptor.encrypt(filename.as_bytes(), &filename_nonce)?;
+
+        // Build metadata with encrypted filename
         let mut metadata = Metadata::new();
         metadata.set(TlvEntry::from_u64(Tag::COMPRESSION_ALGO, self.compression_algo as u64));
         metadata.set(TlvEntry::from_u64(Tag::ENCRYPTION_ALGO, 1));
         metadata.set(TlvEntry::from_u64(Tag::CHUNK_SIZE, self.chunk_size as u64));
         metadata.set(TlvEntry::from_u64(Tag::ORIGINAL_SIZE, file_size));
-        metadata.set(TlvEntry::from_str(Tag::ORIGINAL_FILENAME, filename));
+        // Store encrypted filename (tag 0x0005) with nonce and tag
+        metadata.set(TlvEntry::new(Tag::ORIGINAL_FILENAME, encrypted_filename.clone()));
         metadata.set(TlvEntry::new(Tag::SALT, salt.to_vec()));
+        // Store filename encryption metadata
+        metadata.set(TlvEntry::new(Tag(0x0006), filename_nonce.to_vec())); // Filename nonce
+        metadata.set(TlvEntry::new(Tag(0x0007), filename_tag.to_vec()));   // Filename auth tag
 
+        // Security: Compute metadata integrity hash
         let mut metadata_buf = Vec::new();
+        let _ = metadata.write(&mut metadata_buf)?;
+        let metadata_hash = blake3::hash(&metadata_buf);
+        metadata.set(TlvEntry::new(Tag(0x0008), metadata_hash.as_bytes().to_vec())); // Metadata hash
+
+        // Re-write metadata with hash included
+        metadata_buf.clear();
         let metadata_len = metadata.write(&mut metadata_buf)?;
 
         writer.write_all(&[0u8; HEADER_SIZE])?;
@@ -174,18 +226,7 @@ impl Unpacker {
 
         let metadata = Metadata::read(&mut metadata_bytes.as_slice(), header.metadata_len)?;
 
-        let filename = metadata.get(Tag::ORIGINAL_FILENAME)
-            .and_then(|e| e.as_str())
-            .unwrap_or("output");
-
-        let compression_algo: CompressionAlgo = metadata.get(Tag::COMPRESSION_ALGO)
-            .and_then(|e| e.as_u64())
-            .map(|v| v as u8)
-            .map(CompressionAlgo::from)
-            .unwrap_or(CompressionAlgo::Zstd);
-
-        let decompressor = Compressor::new(compression_algo, 0);
-
+        // Get salt and derive key first (needed for filename decryption)
         let salt_entry = metadata.get(Tag::SALT)
             .ok_or_else(|| ArchiveError::InvalidArchive("Missing salt".into()))?;
         
@@ -196,12 +237,48 @@ impl Unpacker {
         let key = derive_key(&self.password, &salt)?;
         let decryptor = Encryptor::new(&key);
 
+        // Security: Decrypt the filename
+        let filename = if let (Some(encrypted_filename), Some(nonce_entry), Some(tag_entry)) = (
+            metadata.get(Tag::ORIGINAL_FILENAME),
+            metadata.get(Tag(0x0006)), // Filename nonce
+            metadata.get(Tag(0x0007)), // Filename auth tag
+        ) {
+            // New format: encrypted filename
+            let nonce: [u8; NONCE_SIZE] = nonce_entry.value.as_slice()
+                .try_into()
+                .map_err(|_| ArchiveError::InvalidArchive("Invalid filename nonce".into()))?;
+            let tag: [u8; TAG_SIZE] = tag_entry.value.as_slice()
+                .try_into()
+                .map_err(|_| ArchiveError::InvalidArchive("Invalid filename tag".into()))?;
+            
+            let decrypted = decryptor.decrypt(&encrypted_filename.value, &nonce, &tag)?;
+            String::from_utf8(decrypted)
+                .map_err(|_| ArchiveError::InvalidArchive("Invalid filename encoding".into()))?
+        } else {
+            // Legacy format: plaintext filename (for backward compatibility)
+            metadata.get(Tag::ORIGINAL_FILENAME)
+                .and_then(|e| e.as_str())
+                .unwrap_or("output")
+                .to_string()
+        };
+
+        // Security: Sanitize filename to prevent path traversal
+        let filename = sanitize_filename(&filename);
+
+        let compression_algo: CompressionAlgo = metadata.get(Tag::COMPRESSION_ALGO)
+            .and_then(|e| e.as_u64())
+            .map(|v| v as u8)
+            .map(CompressionAlgo::from)
+            .unwrap_or(CompressionAlgo::Zstd);
+
+        let decompressor = Compressor::new(compression_algo, 0);
+
         let chunk_index_offset = file_size - FOOTER_SIZE as u64 - header.chunk_index_len as u64;
         file.seek(std::io::SeekFrom::Start(chunk_index_offset))?;
 
         let chunk_index = ChunkIndex::read(&mut file, header.chunk_count)?;
 
-        let output_file = File::create(filename)?;
+        let output_file = File::create(&filename)?;
         let mut writer = BufWriter::new(output_file);
 
         let mut global_hasher = Hasher::new();
@@ -252,10 +329,41 @@ impl Unpacker {
             .and_then(|e| e.as_u64())
             .unwrap_or(0);
 
-        let filename = metadata.get(Tag::ORIGINAL_FILENAME)
-            .and_then(|e| e.as_str())
-            .unwrap_or("unknown")
-            .to_string();
+        // Get salt and derive key for filename decryption
+        let salt_entry = metadata.get(Tag::SALT)
+            .ok_or_else(|| ArchiveError::InvalidArchive("Missing salt".into()))?;
+        
+        let salt: [u8; SALT_SIZE] = salt_entry.value.as_slice()
+            .try_into()
+            .map_err(|_| ArchiveError::InvalidArchive("Invalid salt".into()))?;
+        
+        let key = derive_key(&self.password, &salt)?;
+        let decryptor = Encryptor::new(&key);
+
+        // Security: Decrypt the filename
+        let filename = if let (Some(encrypted_filename), Some(nonce_entry), Some(tag_entry)) = (
+            metadata.get(Tag::ORIGINAL_FILENAME),
+            metadata.get(Tag(0x0006)), // Filename nonce
+            metadata.get(Tag(0x0007)), // Filename auth tag
+        ) {
+            // New format: encrypted filename
+            let nonce: [u8; NONCE_SIZE] = nonce_entry.value.as_slice()
+                .try_into()
+                .map_err(|_| ArchiveError::InvalidArchive("Invalid filename nonce".into()))?;
+            let tag: [u8; TAG_SIZE] = tag_entry.value.as_slice()
+                .try_into()
+                .map_err(|_| ArchiveError::InvalidArchive("Invalid filename tag".into()))?;
+            
+            let decrypted = decryptor.decrypt(&encrypted_filename.value, &nonce, &tag)?;
+            String::from_utf8(decrypted)
+                .map_err(|_| ArchiveError::InvalidArchive("Invalid filename encoding".into()))?
+        } else {
+            // Legacy format: plaintext filename (for backward compatibility)
+            metadata.get(Tag::ORIGINAL_FILENAME)
+                .and_then(|e| e.as_str())
+                .unwrap_or("unknown")
+                .to_string()
+        };
 
         let compression_algo: CompressionAlgo = metadata.get(Tag::COMPRESSION_ALGO)
             .and_then(|e| e.as_u64())
