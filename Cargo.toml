@@ -1,6 +1,6 @@
 [package]
 name = "srx-rs"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "Modern compressed + encrypted archive format"
 license = "GPL-3.0"
